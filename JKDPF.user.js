@@ -16,10 +16,16 @@
 {
     'use strict';
 
-    // 목록에서 일반 게시글들의 글 번호 배열 추출 (공지 등 제외)
+    // 현재 페이지 일반 게시글들의 글 번호 배열 추출 (공지 등 제외)
     function getPagePostNumbers()
     {
-        const rows = document.querySelectorAll('.gall_list .ub-content');
+        return extractPostNumbersFromDoc(document);
+    }
+
+    // 목록에서 주어진 문서(doc 또는 window)의 일반 게시글들의 글 번호 배열 추출
+    function extractPostNumbersFromDoc(docContext)
+    {
+        const rows = docContext.querySelectorAll('.gall_list .ub-content');
         const numbers = [];
 
         for (const row of rows)
@@ -50,11 +56,42 @@
         return numbers;
     }
 
-    // 최신 일반 게시글 번호 추출
-    function getLatestPostNo()
+    // 최신 일반 게시글 번호 추출 (비동기 처리로 백그라운드 1페이지 조회 지원)
+    async function getLatestPostNo()
     {
-        const numbers = getPagePostNumbers();
-        return numbers.length > 0 ? numbers[0] : null;
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentPage = parseInt(urlParams.get('page') || '1', 10);
+
+        // 이미 1페이지에 있다면 현재 DOM에서 바로 추출
+        if (currentPage === 1)
+        {
+            const numbers = getPagePostNumbers();
+            return numbers.length > 0 ? numbers[0] : null;
+        }
+
+        // 1페이지가 아니라면 백그라운드에서 1페이지를 fetch하여 최신글 확인
+        try
+        {
+            const page1Url = new URL(window.location.href);
+            page1Url.searchParams.set('page', '1');
+            page1Url.searchParams.delete('target_no');
+            page1Url.searchParams.delete('calibrated');
+
+            const response = await fetch(page1Url.toString());
+            const html = await response.text();
+
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            const numbers = extractPostNumbersFromDoc(doc);
+            return numbers.length > 0 ? numbers[0] : null;
+        }
+        catch (error)
+        {
+            console.error('1페이지 최신글 조회 실패:', error);
+            const numbers = getPagePostNumbers();
+            return numbers.length > 0 ? numbers[0] : null;
+        }
     }
 
     // 입력값에서 글 번호만 추출
@@ -129,6 +166,52 @@
         }
     }
 
+    // 스크립트 전용 스타일 적용
+    function applyJumpUIStyles()
+    {
+        const style = document.createElement('style');
+        style.id = 'jump-ui-style';
+        style.textContent = `
+            div.jump-ui-wrapper {
+                display: inline-block;
+                margin-left: 10px;
+                font-size: 12px;
+            }
+            input.jump-ui-input {
+                width: 140px;
+                height: 26px;
+                padding: 0 6px;
+                border: 1px solid #555 !important;
+                border-radius: 3px !important;
+                box-sizing: border-box !important;
+                font-size: 12px !important;
+                vertical-align: middle;
+                /* 다크모드 및 라이트모드 호환을 위해 사이트 기본 배경/글자색 상속 또는 다크톤 적용 */
+                background-color: inherit !important;
+                color: inherit !important;
+            }
+            button.jump-ui-button {
+                margin-left: 4px;
+                padding: 0 10px;
+                height: 26px;
+                box-sizing: border-box !important;
+                display: inline-flex !important;
+                justify-content: center !important;
+                align-items: center !important;
+                font-size: 12px !important;
+                font-weight: bold !important;
+                color: #fff !important;
+                white-space: nowrap;
+                border: 1px solid #3b5998 !important;
+                background-color: #3b5998 !important;
+                border-radius: 3px !important;
+                cursor: pointer;
+                vertical-align: middle;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
     // UI 생성 및 화면 삽입
     function createJumpUI()
     {
@@ -136,54 +219,29 @@
         if (!targetContainer)
             return;
 
+        // 스타일이 주입되어 있지 않다면 최초 1회 주입
+        if (!document.getElementById('jump-ui-style'))
+            applyJumpUIStyles();
+
         const currentUrlParams = new URLSearchParams(window.location.search);
         const searchedNo = currentUrlParams.get('target_no');
 
         const wrapper = document.createElement('div');
-        wrapper.style.display = 'inline-block';
-        wrapper.style.marginLeft = '10px';
-        wrapper.style.fontSize = '12px';
+        wrapper.className = 'jump-ui-wrapper';
 
         const input = document.createElement('input');
         input.type = 'text';
+        input.className = 'jump-ui-input';
         input.placeholder = searchedNo ? `이전 검색: ${searchedNo}` : '글 번호 또는 URL 입력';
         if (searchedNo)
             input.value = searchedNo;
-        
-        input.style.width = '140px';
-        input.style.height = '26px';
-        input.style.padding = '0 6px';
-        input.style.border = '1px solid #ccc';
-        input.style.borderRadius = '3px';
-        input.style.boxSizing = 'border-box';
-        input.style.fontSize = '12px';
-        input.style.verticalAlign = 'middle';
 
-        // 버튼 요소 생성 및 스타일 정의
         const button = document.createElement('button');
         button.innerText = '페이지 이동';
+        button.className = 'jump-ui-button';
 
-        button.style.marginLeft = '4px';
-        button.style.padding = '0 10px';
-        button.style.height = '26px';
-        button.style.boxSizing = 'border-box';
-
-        button.style.display = 'inline-flex';
-        button.style.justifyContent = 'center';
-        button.style.alignItems = 'center';
-
-        button.style.fontSize = '12px';
-        button.style.fontWeight = 'bold';
-        button.style.color = '#fff';
-        button.style.whiteSpace = 'nowrap';
-
-        button.style.border = '1px solid #3b5998';
-        button.style.backgroundColor = '#3b5998';
-        button.style.borderRadius = '3px';
-        button.style.cursor = 'pointer';
-        button.style.verticalAlign = 'middle';
-
-        const handleJump = () => {
+        // 비동기 처리
+        const handleJump = async () => {
             const rawValue = input.value;
             const targetNo = extractPostNo(rawValue);
 
@@ -193,7 +251,8 @@
                 return;
             }
 
-            const latestNo = getLatestPostNo();
+            // 비동기 호출 및 대기 (await 추가)
+            const latestNo = await getLatestPostNo();
             if (!latestNo)
             {
                 alert('최신 글 번호를 불러올 수 없습니다.');
@@ -217,7 +276,6 @@
             const targetUrl = new URL(window.location.href);
             targetUrl.searchParams.set('page', calculatedPage.toString());
             targetUrl.searchParams.set('target_no', targetNo.toString());
-            // 새로운 검색 시 이전 보정 플래그 제거
             targetUrl.searchParams.delete('calibrated');
 
             window.location.href = targetUrl.toString();
