@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         디시 글 번호/URL로 해당 글 위치한 페이지로 이동
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  입력한 글 번호 위치를 계산하여 이동한 후, 삭제글 오차를 감지해 목표 글이 존재하는 정확한 페이지로 정밀 보정 이동합니다. | 현재 50글 기준, 1페이지에서만 작동
 // @author       JKAKK
 // @match        https://gall.dcinside.com/board/lists/*
