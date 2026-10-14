@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         디시 글 번호/URL로 해당 글 위치한 페이지로 이동
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  입력한 글 번호 위치를 계산하여 이동한 후, 삭제글 오차를 감지해 목표 글이 존재하는 정확한 페이지로 정밀 보정 이동합니다. | 현재 50글 기준, 1페이지에서만 작동
 // @author       JKAKK
 // @match        https://gall.dcinside.com/board/lists/*
@@ -15,6 +15,17 @@
 (function ()
 {
     'use strict';
+
+    // @@ 연습 삼아 클래스 구조로 바꿔보기
+    class JKDCPageFinder {
+        constructor() 
+        {
+            this.init();
+        }
+    }
+
+    // MARK: 실행 영역
+    // new JKDCPageFinder();
 
     // 현재 페이지 일반 게시글들의 글 번호 배열 추출 (공지 등 제외)
     function getPagePostNumbers()
@@ -126,18 +137,30 @@
 
         // target_no가 없거나 이미 보정을 마친 상태라면 종료
         if (isNaN(targetNo) || isCalibrated)
+        {
+            // console.log('[JKDPF] 자동 보정 스킵: target_no가 없거나 이미 보정됨');
             return;
+        }
 
         const postNumbers = getPagePostNumbers();
         if (postNumbers.length === 0)
+        {
+            // console.log('[JKDPF] 자동 보정 스킵: 현재 페이지 글 목록을 찾을 수 없음');
             return;
+        }
 
         const maxNo = postNumbers[0]; // 현재 페이지의 가장 큰 글 번호
         const minNo = postNumbers[postNumbers.length - 1]; // 현재 페이지의 가장 작은 글 번호
 
         // 목표 글 번호가 현재 페이지 범위 내에 있다면 보정 완료
         if (targetNo >= minNo && targetNo <= maxNo)
+        {
+            // console.log(`[JKDPF] 🎉 목표 글(${targetNo})이 현재 페이지 범위(${minNo} ~ ${maxNo}) 내에 존재합니다. 보정 작업이 성공적으로 완료되었습니다.`);
+
+            // 작동 플로우 종료시점
+            cleanUpUrlParams();
             return;
+        }
 
         const postsPerPage = 50;
         let diffPage = 0;
@@ -156,6 +179,8 @@
             // 무한 리다이렉트 방지 및 목적지 페이지가 동일할 경우 차이 1 부여
             const finalPage = (calibratedPage === currentPage) ? currentPage + (diffPage > 0 ? 1 : -1) : calibratedPage;
 
+            // console.log(`[JKDPF] 🔄 오차 감지: 목표 글(${targetNo})이 현재 범위 외에 있어 ${finalPage}페이지로 정밀 보정 이동합니다.`);
+
             const targetUrl = new URL(window.location.href);
             targetUrl.searchParams.set('page', finalPage.toString());
             targetUrl.searchParams.set('target_no', targetNo.toString());
@@ -164,6 +189,21 @@
 
             window.location.href = targetUrl.toString();
         }
+    }
+
+    /**
+     * #### 이동 작업 종료 후 URL에 남은 스크립트 전용 파라미터 정리
+     * @returns {void} - 
+     */
+    function cleanUpUrlParams()
+    {
+        const cleanURL = new URL(window.location.href);
+        cleanURL.searchParams.delete('target_no');
+        cleanURL.searchParams.delete('calibrated');
+        
+        // 페이지 새로고침 없이 주소창의 URL만 깔끔하게 갱신
+        window.history.replaceState({}, '', cleanURL.toString());
+        // console.log('[JKDPF] 🧹 URL 파라미터 정돈 완료');
     }
 
     // 스크립트 전용 스타일 적용
@@ -240,53 +280,10 @@
         button.innerText = '페이지 이동';
         button.className = 'jump-ui-button';
 
-        // 비동기 처리
-        const handleJump = async () => {
-            const rawValue = input.value;
-            const targetNo = extractPostNo(rawValue);
-
-            if (!targetNo || targetNo <= 0)
-            {
-                alert('올바른 글 번호 또는 게시글 URL을 입력해 주세요.');
-                return;
-            }
-
-            // 비동기 호출 및 대기 (await 추가)
-            const latestNo = await getLatestPostNo();
-            if (!latestNo)
-            {
-                alert('최신 글 번호를 불러올 수 없습니다.');
-                return;
-            }
-
-            if (targetNo > latestNo)
-            {
-                alert('입력한 글 번호(' + targetNo + ')가 현재 최신 글 번호(' + latestNo + ')보다 큽니다. 1페이지로 이동합니다.');
-                const url = new URL(window.location.href);
-                url.searchParams.set('page', '1');
-                url.searchParams.set('target_no', targetNo.toString());
-                url.searchParams.delete('calibrated');
-                window.location.href = url.toString();
-                return;
-            }
-
-            const postsPerPage = 50;
-            const calculatedPage = Math.floor((latestNo - targetNo) / postsPerPage) + 1;
-
-            const targetUrl = new URL(window.location.href);
-            targetUrl.searchParams.set('page', calculatedPage.toString());
-            targetUrl.searchParams.set('target_no', targetNo.toString());
-            targetUrl.searchParams.delete('calibrated');
-
-            window.location.href = targetUrl.toString();
-        };
-
-        button.addEventListener('click', handleJump);
+        button.addEventListener('click', () => handleJump(input));
         input.addEventListener('keypress', (e) => {
             if (e.key === 'Enter')
-            {
-                handleJump();
-            }
+                handleJump(input);
         });
 
         wrapper.appendChild(input);
@@ -294,8 +291,103 @@
         targetContainer.appendChild(wrapper);
     }
 
+    // 버튼 클릭 또는 엔터 시 실행되는 점프 처리 함수
+    async function handleJump(inputElement)
+    {
+        const rawValue = inputElement.value;
+        const targetNo = extractPostNo(rawValue);
+
+        if (!targetNo || targetNo <= 0)
+        {
+            showToast('올바른 글 번호 또는 게시글 URL을 입력해 주세요.');
+            return;
+        }
+
+        // 비동기 호출 및 대기
+        const latestNo = await getLatestPostNo();
+        if (!latestNo)
+        {
+            showToast('최신 글 번호를 불러올 수 없습니다.');
+            return;
+        }
+
+        if (targetNo > latestNo)
+        {
+            showToast('입력한 글 번호(' + targetNo + ')가 현재 최신 글 번호(' + latestNo + ')보다 큽니다. 1페이지로 이동합니다.');
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', '1');
+            url.searchParams.set('target_no', targetNo.toString());
+            url.searchParams.delete('calibrated');
+            window.location.href = url.toString();
+            return;
+        }
+
+        const postsPerPage = 50;
+        const calculatedPage = Math.floor((latestNo - targetNo) / postsPerPage) + 1;
+
+        // console.log(`[JKDPF] 점프 실행: 목표 글(${targetNo}) -> 계산된 페이지(${calculatedPage})`);
+
+        const targetUrl = new URL(window.location.href);
+        targetUrl.searchParams.set('page', calculatedPage.toString());
+        targetUrl.searchParams.set('target_no', targetNo.toString());
+        targetUrl.searchParams.delete('calibrated');
+
+        window.location.href = targetUrl.toString();
+    }
+
+    // 화면에 흘러가듯 잠시 나타났다 사라지는 토스트 메시지 함수
+    function showToast(message, duration = 1500)
+    {
+        // 이미 토스트가 있다면 중복 생성 방지 위해 제거
+        const existingToast = document.getElementById('jk-toast-message');
+        if (existingToast)
+            existingToast.remove();
+
+        const toast = document.createElement('div');
+        toast.id = 'jk-toast-message';
+        toast.innerText = message;
+        
+        // 토스트 기본 스타일 지정
+        Object.assign(toast.style, {
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            color: '#fff',
+            padding: '10px 16px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            fontWeight: '500',
+            zIndex: '999999',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            transition: 'opacity 0.3s ease-in-out',
+            opacity: '0'
+        });
+
+        document.body.appendChild(toast);
+
+        // 페이드 인 효과
+        requestAnimationFrame(() => {
+            toast.style.opacity = '1';
+        });
+
+        // 지정된 시간(기본 2.5초) 뒤에 페이드 아웃 후 제거
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => {
+                if (toast.parentElement)
+                    toast.remove();
+            }, 300); // 트랜지션 시간 대기 후 DOM에서 삭제
+        }, duration);
+    }
+
+    // MARK: 실행 영역
+
     window.addEventListener('load', () => {
         createJumpUI();
-        autoCalibratePosition();
+        // URL에 target_no가 명시되어 있을 때만 자동 보정 로직 실행
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('target_no'))
+            autoCalibratePosition();
     });
 })();
