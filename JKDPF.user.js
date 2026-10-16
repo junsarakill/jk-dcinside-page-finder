@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         디시 글 번호/URL로 해당 글 위치한 페이지로 이동
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  입력한 글 번호 위치를 계산하여 이동한 후, 삭제글 오차를 감지해 목표 글이 존재하는 정확한 페이지로 정밀 보정 이동합니다. | 현재 50글 기준, 1페이지에서만 작동
 // @author       JKAKK
 // @match        https://gall.dcinside.com/board/lists/*
@@ -22,6 +22,9 @@
         {
             this.init();
         }
+
+        // 페이지 당 글 갯수
+        postsPerPage = 50;
 
         /**
          * #### 기능 시작 부분
@@ -202,16 +205,14 @@
             }
 
             // 보정 작업
-            // @@ 페이지당 글 갯수를 페이지에서 추출해서 가져오게 개선
-            const postsPerPage = 50;
             let diffPage = 0;
 
             // 목표 번호가 현재 페이지 최소 번호보다 작음 -> 더 과거 페이지(page 증가)로 이동
             if (targetNo < minNo)
-                diffPage = Math.max(1, Math.floor((minNo - targetNo) / postsPerPage));
+                diffPage = Math.max(1, Math.floor((minNo - targetNo) / this.postsPerPage));
             // 목표 번호가 현재 페이지 최대 번호보다 큼 -> 더 최신 페이지(page 감소)로 이동
             else if (targetNo > maxNo)
-                diffPage = -Math.max(1, Math.floor((targetNo - maxNo) / postsPerPage));
+                diffPage = -Math.max(1, Math.floor((targetNo - maxNo) / this.postsPerPage));
 
             if (diffPage !== 0)
             {
@@ -362,25 +363,25 @@
                 return;
             }
 
+            let calculatedPage = 1;
+
             if (targetNo > latestNo)
             {
                 this.showToast('입력한 글 번호(' + targetNo + ')가 현재 최신 글 번호(' + latestNo + ')보다 큽니다. 1페이지로 이동합니다.');
-                const url = new URL(window.location.href);
-                url.searchParams.set('page', '1');
-                url.searchParams.set('target_no', targetNo.toString());
-                url.searchParams.delete('calibrated');
-                window.location.href = url.toString();
-                return;
+                
+                calculatedPage = 1
             }
-
-            const postsPerPage = 50;
-            const calculatedPage = Math.floor((latestNo - targetNo) / postsPerPage) + 1;
+            else
+            {
+                calculatedPage = Math.floor((latestNo - targetNo) / this.postsPerPage) + 1;
+            }
 
             // console.log(`[JKDPF] 점프 실행: 목표 글(${targetNo}) -> 계산된 페이지(${calculatedPage})`);
 
             const targetUrl = new URL(window.location.href);
             targetUrl.searchParams.set('page', calculatedPage.toString());
             targetUrl.searchParams.set('target_no', targetNo.toString());
+            targetUrl.searchParams.delete('exception_mode');
             targetUrl.searchParams.delete('calibrated');
 
             window.location.href = targetUrl.toString();
@@ -436,6 +437,8 @@
                 }, 300); // 트랜지션 시간 대기 후 DOM에서 삭제
             }, duration);
         }
+
+
     }
 
     // MARK: 실행 영역
