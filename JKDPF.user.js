@@ -82,7 +82,7 @@
         
         /**
          * #### 현재 페이지 일반 글 번호 배열 가져오기
-         * @returns {Array} - 현재 페이지 일반 글 번호 배열
+         * @returns {Array<number>} - 현재 페이지 일반 글 번호 배열
          */
         getCurPagePostNums()
         {
@@ -166,12 +166,6 @@
         autoCalibratePosition()
         {
             const curURLParams = new URLSearchParams(window.location.search);
-
-            if(curURLParams.has('taget_no'))
-            {
-                // console.log('[JKDPF] 자동 보정 스킵: target_no가 없거나 이미 보정됨');
-                return
-            }
 
             // 찾아낼 글 번호
             const targetNo = parseInt(curURLParams.get('target_no'), 10);
@@ -369,7 +363,7 @@
             {
                 this.showToast('입력한 글 번호(' + targetNo + ')가 현재 최신 글 번호(' + latestNo + ')보다 큽니다. 1페이지로 이동합니다.');
                 
-                calculatedPage = 1
+                calculatedPage = 1;
             }
             else
             {
