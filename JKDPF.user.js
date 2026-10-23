@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         디시 글 번호/URL로 해당 글 위치한 페이지로 이동
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      2.0
 // @description  입력한 글 번호 위치를 계산하여 이동한 후, 삭제글 오차를 감지해 목표 글이 존재하는 정확한 페이지로 정밀 보정 이동합니다. | 현재 50글 기준, 1페이지에서만 작동
 // @author       JKAKK
 // @match        https://gall.dcinside.com/board/lists/*
@@ -25,6 +25,9 @@
 
         // 페이지 당 글 갯수
         postsPerPage = 50;
+
+        // 디버그 모드 | 로그 작동
+        isDebug = false;
 
         /**
          * #### 기능 시작 부분
@@ -174,63 +177,129 @@
 
             if (isNaN(targetNo))
             {
-                console.log('[JKDPF] 자동 보정 스킵: target_no가 없음');
+                this.log('자동 보정 스킵: target_no가 없음');
                 return;
             }
 
             const postNumbers = this.getCurPagePostNums();
             if (postNumbers.length === 0)
             {
-                console.log('[JKDPF] 자동 보정 스킵: 현재 페이지 글 목록을 찾을 수 없음');
+                this.log('자동 보정 스킵: 현재 페이지 글 목록을 찾을 수 없음');
                 return;
             }
 
-            const maxNo = postNumbers[0]; // 현재 페이지의 가장 큰 글 번호
-            const minNo = postNumbers[postNumbers.length - 1]; // 현재 페이지의 가장 작은 글 번호
+            // 현재 페이지의 가장 큰 글 번호
+            const maxNo = postNumbers[0]; 
+            // 현재 페이지의 가장 작은 글 번호
+            const minNo = postNumbers[postNumbers.length - 1]; 
 
-            console.log(`[JKDPF] 중간 체크 목표 글(${targetNo})이 현재 페이지 범위(${minNo} ~ ${maxNo})`);
+            this.log(`중간 체크 목표 글(${targetNo})이 현재 페이지 범위(${minNo} ~ ${maxNo})`);
 
             // 목표 글 번호가 현재 페이지 범위 내에 있다면 보정 완료
             if (targetNo >= minNo && targetNo <= maxNo)
             {
-                console.log(`[JKDPF] 🎉 목표 글(${targetNo})이 현재 페이지 범위(${minNo} ~ ${maxNo}) 내에 존재합니다. 보정 작업이 성공적으로 완료되었습니다.`);
+                this.log(`🎉 목표 글(${targetNo})이 현재 페이지 범위(${minNo} ~ ${maxNo}) 내에 존재합니다. 보정 작업이 성공적으로 완료되었습니다.`);
 
                 // 작동 플로우 종료시점
+                this.clearSessionState();
                 this.cleanUpURLParams();
                 return;
             }
 
-            // 보정 작업
-            let diffPage = 0;
-            let direction = 0; // 방향 판별 (1: 과거로 이동/페이지 증가, -1: 최신으로 이동/페이지 감소)
+            // MARK: 보정 데이터 불러오기
+            const { prevPage, prevMidNo, densityRatio } = this.getSessionState();
+
+            // 🛡️ [방어 분기] 밀도 계수나 필수 세션 데이터가 NaN으로 오염된 경우 무한 루프 방지
+            if (isNaN(densityRatio))
+            {
+                // 세션 데이터가 손상되었으므로 초기화 후 기본값으로 진행 또는 탈출
+                this.log('⚠️ 경고: 세션 밀도 계수가 NaN으로 오염되어 초기화합니다.');
+                this.clearSessionState();
+            }
+
+            const curMidNo = Math.floor((maxNo + minNo) / 2);
+
+            let newDensityRatio = isNaN(densityRatio) ? 1.0 : densityRatio;
+
+            if (!isNaN(prevPage) && !isNaN(prevMidNo))
+            {
+                // 🛡️ 만약 이전 페이지 기록은 존재하는데 둘 중 하나라도 NaN이면 데이터 오염 상태이므로 중단
+                if (isNaN(prevPage) || isNaN(prevMidNo))
+                {
+                    this.log('🛑 오류: 세션 기록이 손상되었습니다(NaN 감지). 무한 루프 방지를 위해 보정을 중단합니다.');
+                    this.clearSessionState();
+                    return;
+                }
+
+                const actualPageDiff = Math.abs(curPage - prevPage);
+                const actualNoDiff = Math.abs(curMidNo - prevMidNo);
+
+                if (actualPageDiff > 0 && actualNoDiff > 0)
+                {
+                    const expectedNoDiff = actualPageDiff * this.postsPerPage;
+                    const measuredRatio = actualNoDiff / expectedNoDiff;
+                    newDensityRatio = Math.max(0.2, Math.min(2.0, measuredRatio));
+
+                    // 📊 학습 데이터 변화량 및 측정값 상세 로그
+                    this.log
+                    (
+                        `📊 밀도 분석: ` +
+                        `이전 페이지(${prevPage} -> 현 ${curPage}, ΔPage: ${actualPageDiff}) | ` +
+                        `중간번호 변화(${prevMidNo} -> 현 ${curMidNo}, ΔNo: ${actualNoDiff}) | ` +
+                        `예상 번호변화(${expectedNoDiff}) | ` +
+                        `측정 비율(${measuredRatio.toFixed(3)}) | ` +
+                        `적용된 밀도 계수: ${densityRatio.toFixed(3)} ➔ ${newDensityRatio.toFixed(3)}`
+                    );
+                }
+                else
+                {
+                    this.log(`⚠️ 밀도 분석 스킵: 페이지 변화량 또는 번호 변화량이 0입니다. (ΔPage: ${actualPageDiff}, ΔNo: ${actualNoDiff})`);
+                }
+            }
+            else
+            {
+                this.log(`💡 첫 번째 점프이므로 학습된 밀도 계수(${newDensityRatio.toFixed(3)})를 기본값으로 사용합니다.`);
+            }
+
+            // 현재 상태 저장
+            this.setSessionState(curPage, curMidNo, newDensityRatio);
+
+            // MARK: 보정 작업
+            // 목표 페이지와의 차이량
+            let rawDiffPage = 0;
+            // 방향 판별 (1: 과거로 이동/페이지 증가, -1: 최신으로 이동/페이지 감소)
+            let direction = 0; 
 
             // 목표 번호가 현재 페이지 최소 번호보다 작음 -> 더 과거 페이지(page 증가)로 이동
             if (targetNo < minNo)
             {
-                diffPage = Math.max(1, Math.floor((minNo - targetNo) / this.postsPerPage));
+                rawDiffPage = minNo - targetNo;
                 direction = 1;
             }
             // 목표 번호가 현재 페이지 최대 번호보다 큼 -> 더 최신 페이지(page 감소)로 이동
             else if (targetNo > maxNo)
             {
-                diffPage = Math.max(1, Math.floor((targetNo - maxNo) / this.postsPerPage));
+                rawDiffPage = targetNo - maxNo;
                 direction = -1;
             }
 
             if (direction !== 0)
             {
+                const baseEstimatedPages = Math.floor(rawDiffPage / this.postsPerPage);
+                const adjustedPages = Math.round(baseEstimatedPages / newDensityRatio);
+                const diffPage = Math.max(1, adjustedPages);
+                
                 // 방향에 맞춰 페이지 계산 (과거로 갈 땐 +, 최신으로 갈 땐 -)
                 const calibratedPage = Math.max(1, curPage + (diffPage * direction));
-
                 // 무한 리다이렉트 방지 및 목적지 페이지가 동일할 경우 차이 1 부여
                 const finalPage = (calibratedPage === curPage) ? curPage + direction : calibratedPage;
 
-                console.log(`[JKDPF] 🔄 오차 감지: 목표 글(${targetNo})이 현재 범위 외에 있어 ${curPage}에서 ${finalPage}페이지로 정밀 보정 이동합니다.`);
-
+                this.log(`🔄 오차 감지: 목표 글(${targetNo})이 현재 범위 외에 있어 ${curPage}에서 ${finalPage}페이지로 정밀 보정 이동합니다.`);
+                
                 const targetURL = new URL(window.location.href);
                 targetURL.searchParams.set('page', finalPage.toString());
                 targetURL.searchParams.set('target_no', targetNo.toString());
-
+                
                 window.location.href = targetURL.toString();
             }
         }
@@ -247,7 +316,7 @@
             
             // 페이지 새로고침 없이 주소창의 URL만 깔끔하게 갱신
             window.history.replaceState({}, '', cleanURL.toString());
-            // console.log('[JKDPF] 🧹 URL 파라미터 정돈 완료');
+            // this.log('🧹 URL 파라미터 정돈 완료');
         }
 
         /**
@@ -378,7 +447,7 @@
                 calculatedPage = Math.floor((latestNo - targetNo) / this.postsPerPage) + 1;
             }
 
-            // console.log(`[JKDPF] 점프 실행: 목표 글(${targetNo}) -> 계산된 페이지(${calculatedPage})`);
+            // this.log(`점프 실행: 목표 글(${targetNo}) -> 계산된 페이지(${calculatedPage})`);
 
             const targetUrl = new URL(window.location.href);
             targetUrl.searchParams.set('page', calculatedPage.toString());
@@ -440,6 +509,43 @@
             }, duration);
         }
 
+        // MARK: 세션 스토리지 헬퍼 함수
+
+        // 보정용 정보 불러오기
+        getSessionState()
+        {
+            const rawRatio = sessionStorage.getItem('jk_density_ratio');
+            const parsedRatio = parseFloat(rawRatio);
+
+            return {
+                prevPage: parseInt(sessionStorage.getItem('jk_prev_page'), 10) || NaN,
+                prevMidNo: parseInt(sessionStorage.getItem('jk_prev_mid_no'), 10) || NaN,
+                densityRatio: (rawRatio === null || isNaN(parsedRatio)) ? 1.0 : parsedRatio
+            };
+        }
+
+        // 보정용 정보 저장
+        setSessionState(page, midNo, ratio)
+        {
+            sessionStorage.setItem('jk_prev_page', page.toString());
+            sessionStorage.setItem('jk_prev_mid_no', midNo.toString());
+            sessionStorage.setItem('jk_density_ratio', ratio.toString());
+        }
+
+        // 보정용 정보 제거
+        clearSessionState()
+        {
+            sessionStorage.removeItem('jk_prev_page');
+            sessionStorage.removeItem('jk_prev_mid_no');
+            sessionStorage.removeItem('jk_density_ratio');
+        }
+
+        // 전용 로거
+        log(msg)
+        {
+            if(this.isDebug)
+                console.log(`[JKDPF] ${msg}`);
+        }
 
     }
 
