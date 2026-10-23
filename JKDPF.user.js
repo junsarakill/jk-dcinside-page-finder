@@ -172,26 +172,28 @@
             const curPage = parseInt(curURLParams.get('page') || '1', 10);
             const isCalibrated = curURLParams.get('calibrated') === '1';
 
-            if (isNaN(targetNo) || isCalibrated)
+            if (isNaN(targetNo))
             {
-                // console.log('[JKDPF] 자동 보정 스킵: target_no가 없거나 이미 보정됨');
+                console.log('[JKDPF] 자동 보정 스킵: target_no가 없음');
                 return;
             }
 
             const postNumbers = this.getCurPagePostNums();
             if (postNumbers.length === 0)
             {
-                // console.log('[JKDPF] 자동 보정 스킵: 현재 페이지 글 목록을 찾을 수 없음');
+                console.log('[JKDPF] 자동 보정 스킵: 현재 페이지 글 목록을 찾을 수 없음');
                 return;
             }
 
             const maxNo = postNumbers[0]; // 현재 페이지의 가장 큰 글 번호
             const minNo = postNumbers[postNumbers.length - 1]; // 현재 페이지의 가장 작은 글 번호
 
+            console.log(`[JKDPF] 중간 체크 목표 글(${targetNo})이 현재 페이지 범위(${minNo} ~ ${maxNo})`);
+
             // 목표 글 번호가 현재 페이지 범위 내에 있다면 보정 완료
             if (targetNo >= minNo && targetNo <= maxNo)
             {
-                // console.log(`[JKDPF] 🎉 목표 글(${targetNo})이 현재 페이지 범위(${minNo} ~ ${maxNo}) 내에 존재합니다. 보정 작업이 성공적으로 완료되었습니다.`);
+                console.log(`[JKDPF] 🎉 목표 글(${targetNo})이 현재 페이지 범위(${minNo} ~ ${maxNo}) 내에 존재합니다. 보정 작업이 성공적으로 완료되었습니다.`);
 
                 // 작동 플로우 종료시점
                 this.cleanUpURLParams();
@@ -200,28 +202,34 @@
 
             // 보정 작업
             let diffPage = 0;
+            let direction = 0; // 방향 판별 (1: 과거로 이동/페이지 증가, -1: 최신으로 이동/페이지 감소)
 
             // 목표 번호가 현재 페이지 최소 번호보다 작음 -> 더 과거 페이지(page 증가)로 이동
             if (targetNo < minNo)
+            {
                 diffPage = Math.max(1, Math.floor((minNo - targetNo) / this.postsPerPage));
+                direction = 1;
+            }
             // 목표 번호가 현재 페이지 최대 번호보다 큼 -> 더 최신 페이지(page 감소)로 이동
             else if (targetNo > maxNo)
-                diffPage = -Math.max(1, Math.floor((targetNo - maxNo) / this.postsPerPage));
-
-            if (diffPage !== 0)
             {
-                const calibratedPage = Math.max(1, curPage + diffPage);
+                diffPage = Math.max(1, Math.floor((targetNo - maxNo) / this.postsPerPage));
+                direction = -1;
+            }
+
+            if (direction !== 0)
+            {
+                // 방향에 맞춰 페이지 계산 (과거로 갈 땐 +, 최신으로 갈 땐 -)
+                const calibratedPage = Math.max(1, curPage + (diffPage * direction));
 
                 // 무한 리다이렉트 방지 및 목적지 페이지가 동일할 경우 차이 1 부여
-                const finalPage = (calibratedPage === curPage) ? curPage + (diffPage > 0 ? 1 : -1) : calibratedPage;
+                const finalPage = (calibratedPage === curPage) ? curPage + direction : calibratedPage;
 
-                // console.log(`[JKDPF] 🔄 오차 감지: 목표 글(${targetNo})이 현재 범위 외에 있어 ${finalPage}페이지로 정밀 보정 이동합니다.`);
+                console.log(`[JKDPF] 🔄 오차 감지: 목표 글(${targetNo})이 현재 범위 외에 있어 ${curPage}에서 ${finalPage}페이지로 정밀 보정 이동합니다.`);
 
                 const targetURL = new URL(window.location.href);
                 targetURL.searchParams.set('page', finalPage.toString());
                 targetURL.searchParams.set('target_no', targetNo.toString());
-                // 무한 루프 방지를 위한 보정 수행 플래그 설정
-                targetURL.searchParams.set('calibrated', '1');
 
                 window.location.href = targetURL.toString();
             }
